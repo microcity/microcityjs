@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>排队仿真 - Worker + WASM + Three.js</title>
+		<style>
+			:root {
+				color-scheme: light;
+			}
+
+			body {
+				margin: 0;
+				font-family: Arial, sans-serif;
+				background: #f3f4f6;
+			}
+
+			.app {
+				padding: 16px;
+				display: grid;
+				gap: 12px;
+			}
+
+			.panel {
+				background: #ffffff;
+				border-radius: 8px;
+				padding: 12px;
+				box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+			}
+
+			.controls {
+				display: grid;
+				grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+				gap: 10px;
+				align-items: end;
+			}
+
+			.field {
+				display: grid;
+				gap: 6px;
+			}
+
+			label {
+				font-size: 13px;
+			}
+
+			input {
+				border: 1px solid #d1d5db;
+				border-radius: 6px;
+				padding: 8px;
+				font-size: 14px;
+			}
+
+			button {
+				height: 36px;
+				border: 0;
+				border-radius: 6px;
+				background: #2563eb;
+				color: white;
+				cursor: pointer;
+			}
+
+			button:hover {
+				background: #1d4ed8;
+			}
+
+			#status {
+				margin-top: 8px;
+				font-size: 13px;
+			}
+
+			#sceneWrap {
+				width: 100%;
+				height: 540px;
+				border: 1px solid #d1d5db;
+				border-radius: 8px;
+				overflow: hidden;
+				background: #111827;
+			}
+
+			#simCanvas {
+				width: 100%;
+				height: 100%;
+				display: block;
+			}
+		</style>
+	</head>
+	<body>
+		<div class="app">
+			<div class="panel">
+				<div class="controls">
+					<div class="field">
+						<label for="arrivalRate">到达率 λ（每单位时间）</label>
+						<input id="arrivalRate" type="number" min="0.1" step="0.1" value="1.8" />
+					</div>
+					<div class="field">
+						<label for="serviceRate">服务率 μ（每单位时间）</label>
+						<input id="serviceRate" type="number" min="0.1" step="0.1" value="2.2" />
+					</div>
+					<div class="field">
+						<label for="queueCapacity">最大排队长度</label>
+						<input id="queueCapacity" type="number" min="1" step="1" value="12" />
+					</div>
+					<div class="field">
+						<label for="duration">仿真时长</label>
+						<input id="duration" type="number" min="5" step="1" value="60" />
+					</div>
+					<button id="playBtn" type="button">播放仿真</button>
+				</div>
+				<div id="status">状态：等待开始</div>
+			</div>
+
+			<div class="panel">
+				<div id="sceneWrap">
+					<canvas id="simCanvas"></canvas>
+				</div>
+			</div>
+		</div>
+
+		<script type="module">
+			const playBtn = document.getElementById('playBtn');
+			const statusEl = document.getElementById('status');
+			const sceneWrap = document.getElementById('sceneWrap');
+
+			const controls = {
+				arrivalRate: document.getElementById('arrivalRate'),
+				serviceRate: document.getElementById('serviceRate'),
+				queueCapacity: document.getElementById('queueCapacity'),
+				duration: document.getElementById('duration')
+			};
+
+			let worker = null;
+			let canvasEl = document.getElementById('simCanvas');
+
+			function setStatus(text) {
+				statusEl.textContent = `状态：${text}`;
+			}
+
+			function recreateCanvas() {
+				const nextCanvas = document.createElement('canvas');
+				nextCanvas.id = 'simCanvas';
+				sceneWrap.replaceChildren(nextCanvas);
+				canvasEl = nextCanvas;
+			}
+
+			function readConfig() {
+				return {
+					arrivalRate: Number(controls.arrivalRate.value),
+					serviceRate: Number(controls.serviceRate.value),
+					queueCapacity: Number(controls.queueCapacity.value),
+					duration: Number(controls.duration.value)
+				};
+			}
+
+			function postResize() {
+				if (!worker || !canvasEl) return;
+				const rect = sceneWrap.getBoundingClientRect();
+				worker.postMessage({
+					type: 'resize',
+					width: Math.max(1, Math.floor(rect.width)),
+					height: Math.max(1, Math.floor(rect.height))
+				});
+			}
+
+			playBtn.addEventListener('click', () => {
+				if (worker) {
+					worker.terminate();
+					worker = null;
+				}
+
+				recreateCanvas();
+
+				const config = readConfig();
+				const rect = sceneWrap.getBoundingClientRect();
+
+				const offscreen = canvasEl.transferControlToOffscreen();
+				worker = new Worker('./queue-worker.js', { type: 'module' });
+
+				worker.onmessage = (event) => {
+					const msg = event.data;
+					if (msg.type === 'status') {
+						setStatus(msg.text);
+					} else if (msg.type === 'stats') {
+						setStatus(`运行中 | t=${msg.simTime.toFixed(2)} 到达=${msg.arrived} 完成=${msg.served} 丢弃=${msg.dropped} 队列=${msg.queueLength}`);
+					} else if (msg.type === 'done') {
+						setStatus(`结束 | t=${msg.simTime.toFixed(2)} 到达=${msg.arrived} 完成=${msg.served} 丢弃=${msg.dropped}`);
+					} else if (msg.type === 'error') {
+						setStatus(`错误：${msg.message}`);
+					}
+				};
+
+				worker.postMessage({
+					type: 'start',
+					canvas: offscreen,
+					width: Math.max(1, Math.floor(rect.width)),
+					height: Math.max(1, Math.floor(rect.height)),
+					config
+				}, [offscreen]);
+
+				setStatus('正在初始化 Worker 和仿真引擎');
+			});
+
+			window.addEventListener('resize', postResize);
+		</script>
+	</body>
+</html>
