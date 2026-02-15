@@ -11,24 +11,22 @@ const wasmModule = await createModule({
   }
 });
 
-const initSimulation = wasmModule.cwrap('InitSimulation', null, ['number']);
-const scheduleEvent = wasmModule.cwrap('ScheduleEvent', 'number', ['number', 'number']);
-const getSimTime = wasmModule.cwrap('GetSimTime', 'number', []);
-const popAndExecuteOne = wasmModule.cwrap('PopAndExecuteOne', 'number', []);
+const initEventQ = wasmModule.cwrap('InitEventQ', null, ['number']);
+const pushEvent = wasmModule.cwrap('PushEvent', null, ['number']);
+const popEvent = wasmModule.cwrap('PopEvent', 'number', []);
 
-initSimulation(16);
-log('Simulation initialized');
+initEventQ(16);
+log('Event queue initialized');
 
-scheduleEvent(101, 1.5);
-scheduleEvent(102, 0.5);
-scheduleEvent(103, 2.0);
-log('Scheduled 3 events');
+pushEvent(0.5);
+pushEvent(1.5);
+pushEvent(2.0);
+log('Pushed 3 event times');
 
 while (true) {
-  const callbackId = popAndExecuteOne();
-  if (callbackId === -1) break;
-  const time = getSimTime();
-  log(`Executed callbackId=${callbackId}, simTime=${time.toFixed(3)}`);
+  const time = popEvent();
+  if (time === -1) break;
+  log(`Popped event time=${time.toFixed(3)}`);
 }
 
 log('Done');

@@ -10,10 +10,9 @@ let camera = null;
 let rafId = null;
 
 let wasmModule = null;
-let initSimulation = null;
-let scheduleEvent = null;
-let getSimTime = null;
-let popAndExecuteOne = null;
+let initEventQ = null;
+let pushEvent = null;
+let popEvent = null;
 
 let queueEntities = [];
 let inServiceEntity = null;
@@ -36,11 +35,28 @@ let stats = {
 };
 
 let nextEntityId = 1;
+let pendingEventTypes = new Map();
 
 const geometry = new THREE.BoxGeometry(0.8, 0.8, 0.8);
 
 function send(message) {
   self.postMessage(message);
+}
+
+function timeKey(time) {
+  return Number(time).toFixed(9);
+}
+
+function scheduleTypedEvent(eventType, delay) {
+  const eventTime = stats.simTime + Math.max(0, Number(delay) || 0);
+  const key = timeKey(eventTime);
+
+  if (!pendingEventTypes.has(key)) {
+    pendingEventTypes.set(key, []);
+  }
+
+  pendingEventTypes.get(key).push(eventType);
+  pushEvent(eventTime);
 }
 
 function exponential(rate) {
@@ -76,6 +92,7 @@ function resetSimulationState() {
   running = true;
   lastStatsSent = 0;
   nextEntityId = 1;
+  pendingEventTypes = new Map();
   stats = {
     simTime: 0,
     arrived: 0,
@@ -133,7 +150,7 @@ function onArrival() {
   if (!serverBusy) {
     serverBusy = true;
     inServiceEntity = entity;
-    scheduleEvent(EVENT_DEPARTURE, exponential(config.serviceRate));
+    scheduleTypedEvent(EVENT_DEPARTURE, exponential(config.serviceRate));
   } else if (queueEntities.length < config.queueCapacity) {
     queueEntities.push(entity);
   } else {
@@ -142,7 +159,7 @@ function onArrival() {
   }
 
   if (stats.simTime < config.duration) {
-    scheduleEvent(EVENT_ARRIVAL, exponential(config.arrivalRate));
+    scheduleTypedEvent(EVENT_ARRIVAL, exponential(config.arrivalRate));
   }
 }
 
@@ -156,23 +173,30 @@ function onDeparture() {
   if (queueEntities.length > 0) {
     inServiceEntity = queueEntities.shift();
     serverBusy = true;
-    scheduleEvent(EVENT_DEPARTURE, exponential(config.serviceRate));
+    scheduleTypedEvent(EVENT_DEPARTURE, exponential(config.serviceRate));
   } else {
     serverBusy = false;
   }
 }
 
 function processOneEvent() {
-  const callbackId = popAndExecuteOne();
-  if (callbackId === -1) {
+  const eventTime = popEvent();
+  if (eventTime === -1) {
     return false;
   }
 
-  stats.simTime = getSimTime();
+  stats.simTime = eventTime;
+  const key = timeKey(eventTime);
+  const queuedTypes = pendingEventTypes.get(key);
+  const eventType = queuedTypes?.shift();
 
-  if (callbackId === EVENT_ARRIVAL) {
+  if (queuedTypes && queuedTypes.length === 0) {
+    pendingEventTypes.delete(key);
+  }
+
+  if (eventType === EVENT_ARRIVAL) {
     onArrival();
-  } else if (callbackId === EVENT_DEPARTURE) {
+  } else if (eventType === EVENT_DEPARTURE) {
     onDeparture();
   }
 
@@ -279,10 +303,9 @@ async function ensureWasmLoaded() {
   wasmModule = await createModule({
     js_execute_event: () => {}
   });
-  initSimulation = wasmModule.cwrap('InitSimulation', null, ['number']);
-  scheduleEvent = wasmModule.cwrap('ScheduleEvent', 'number', ['number', 'number']);
-  getSimTime = wasmModule.cwrap('GetSimTime', 'number', []);
-  popAndExecuteOne = wasmModule.cwrap('PopAndExecuteOne', 'number', []);
+  initEventQ = wasmModule.cwrap('InitEventQ', null, ['number']);
+  pushEvent = wasmModule.cwrap('PushEvent', null, ['number']);
+  popEvent = wasmModule.cwrap('PopEvent', 'number', []);
 }
 
 async function start(payload) {
@@ -300,8 +323,8 @@ async function start(payload) {
   send({ type: 'status', text: '场景创建完成，正在加载 WASM 引擎' });
 
   await ensureWasmLoaded();
-  initSimulation(4096);
-  scheduleEvent(EVENT_ARRIVAL, exponential(config.arrivalRate));
+  initEventQ(4096);
+  scheduleTypedEvent(EVENT_ARRIVAL, exponential(config.arrivalRate));
 
   send({ type: 'status', text: '仿真开始运行' });
   rafId = requestAnimationFrame(renderLoop);
