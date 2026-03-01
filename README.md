@@ -110,38 +110,3 @@ classDiagram
 	Server "1" --> "0..1" Cargo : serving
 	Simulator ..> Cargo : creates arrivals
 ```
-
-## 程序调用流程图（Mermaid）
-
-```mermaid
-flowchart TD
-    A[用户点击播放仿真] --> B[main startDualWorkers]
-    B --> C[重建Canvas并转Offscreen]
-    C --> D[创建sim worker与render worker]
-    D --> E[Comlink封装两个worker API]
-    E --> F[创建MessageChannel]
-    F --> G[sim连接port1]
-    F --> H[render连接port2]
-    H --> I[render init]
-    I --> J[Render初始化场景和动画循环]
-    J --> K[sim start]
-
-    K --> L[Simulator重置状态并预加载模型]
-    L --> M[调度首次到达并启动tick]
-    M --> N[simulationTick循环]
-    N --> O[处理到达或服务完成]
-    O --> P[构建frame payload]
-    P --> Q[发送frame到render port]
-    Q --> R[Render接收frame]
-    R --> S[Render应用对象目标状态]
-    S --> T[插值动画并渲染]
-
-    N --> U[定期上报统计到状态栏]
-    N --> V{达到时长或无事件}
-    V -- 是 --> W[停止循环并onDone]
-    V -- 否 --> N
-
-    X[用户拖拽或滚轮] --> Y[main桥接鼠标事件]
-    Y --> Z[render处理鼠标输入]
-    Z --> T
-```
