@@ -1,0 +1,1436 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NeuroSim Agent Platform Demo</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f7fafc;
+        --panel: rgba(255, 255, 255, 0.88);
+        --panel-soft: rgba(248, 250, 252, 0.92);
+        --line: rgba(148, 163, 184, 0.32);
+        --text: #0f172a;
+        --muted: #64748b;
+        --accent: #2563eb;
+        --accent-2: #059669;
+        --warn: #e11d48;
+        --shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at top left, rgba(59, 130, 246, 0.16), transparent 32%),
+          radial-gradient(circle at bottom right, rgba(16, 185, 129, 0.1), transparent 28%),
+          linear-gradient(135deg, #f8fbff 0%, #eef4fb 55%, #f7fafc 100%);
+      }
+
+      .app-shell {
+        display: flex;
+        flex-direction: column;
+        min-height: 100vh;
+      }
+
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 16px 22px;
+        border-bottom: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.82);
+        backdrop-filter: blur(18px);
+        position: sticky;
+        top: 0;
+        z-index: 50;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .brand-badge {
+        width: 38px;
+        height: 38px;
+        display: grid;
+        place-items: center;
+        border-radius: 12px;
+        background: linear-gradient(135deg, rgba(37, 99, 235, 0.14), rgba(5, 150, 105, 0.14));
+        box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.14);
+      }
+
+      .brand h1 {
+        margin: 0;
+        font-size: 18px;
+        letter-spacing: 0.04em;
+      }
+
+      .brand small {
+        display: block;
+        margin-top: 2px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .toolbar {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+
+      .segmented {
+        display: inline-flex;
+        gap: 6px;
+        padding: 5px;
+        border-radius: 14px;
+        background: rgba(241, 245, 249, 0.96);
+        border: 1px solid var(--line);
+      }
+
+      .segmented button,
+      .run-btn,
+      .send-btn {
+        border: 0;
+        cursor: pointer;
+        color: var(--text);
+      }
+
+      .segmented button {
+        padding: 10px 16px;
+        border-radius: 10px;
+        background: transparent;
+        color: var(--muted);
+        font-weight: 600;
+        transition: 160ms ease;
+      }
+
+      .segmented button.active {
+        background: rgba(255, 255, 255, 0.96);
+        color: var(--accent);
+        box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.12), 0 8px 18px rgba(15, 23, 42, 0.08);
+      }
+
+      .run-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 11px 18px;
+        border-radius: 12px;
+        background: linear-gradient(135deg, #12a97c, #0f766e);
+        font-weight: 700;
+        box-shadow: 0 12px 28px rgba(16, 185, 129, 0.22);
+        transition: 180ms ease;
+      }
+
+      .run-btn.running {
+        background: linear-gradient(135deg, #f59e0b, #ea580c);
+        box-shadow: 0 12px 28px rgba(245, 158, 11, 0.22);
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: 264px minmax(0, 1fr) 360px;
+        min-height: calc(100vh - 71px);
+      }
+
+      .sidebar,
+      .inspector {
+        background: var(--panel);
+        border-right: 1px solid var(--line);
+        backdrop-filter: blur(18px);
+      }
+
+      .inspector {
+        border-right: 0;
+        border-left: 1px solid var(--line);
+      }
+
+      .panel-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 18px 18px 14px;
+        border-bottom: 1px solid var(--line);
+        font-weight: 700;
+      }
+
+      .panel-icon {
+        width: 28px;
+        height: 28px;
+        display: grid;
+        place-items: center;
+        border-radius: 9px;
+        background: rgba(37, 99, 235, 0.08);
+        color: var(--accent);
+      }
+
+      .sidebar-body,
+      .inspector-section {
+        padding: 16px;
+      }
+
+      .sidebar-note,
+      .hint-line,
+      .empty-state {
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.55;
+      }
+
+      .library-list {
+        display: grid;
+        gap: 12px;
+        margin-top: 16px;
+      }
+
+      .library-item {
+        padding: 14px;
+        border-radius: 14px;
+        border: 1px solid rgba(109, 140, 183, 0.24);
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.98));
+        cursor: grab;
+        box-shadow: var(--shadow);
+        transition: transform 160ms ease, border-color 160ms ease;
+      }
+
+      .library-item:hover {
+        transform: translateY(-2px);
+        border-color: rgba(71, 180, 255, 0.46);
+      }
+
+      .library-item strong {
+        display: block;
+        font-size: 14px;
+      }
+
+      .library-item small {
+        display: block;
+        margin-top: 6px;
+        color: var(--muted);
+      }
+
+      .viewport {
+        position: relative;
+        overflow: hidden;
+        background: radial-gradient(circle at center, rgba(59, 130, 246, 0.08), transparent 42%), #f8fbff;
+      }
+
+      .viewport.mode-2d {
+        background-image:
+          radial-gradient(circle at center, rgba(59, 130, 246, 0.08), transparent 42%),
+          radial-gradient(circle, rgba(148, 163, 184, 0.3) 1px, transparent 1px);
+        background-size: auto, 32px 32px;
+      }
+
+      .viewport::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.28), transparent 20%, transparent 80%, rgba(226, 232, 240, 0.28));
+        pointer-events: none;
+        z-index: 1;
+      }
+
+      .mode-chip {
+        position: absolute;
+        top: 16px;
+        left: 16px;
+        z-index: 40;
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 14px;
+        border-radius: 999px;
+        border: 1px solid rgba(148, 163, 184, 0.3);
+        background: rgba(255, 255, 255, 0.78);
+        backdrop-filter: blur(16px);
+        box-shadow: var(--shadow);
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .mode-chip strong {
+        color: var(--text);
+      }
+
+      .scene3d {
+        position: absolute;
+        inset: 0;
+        z-index: 4;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+      }
+
+      .viewport.mode-3d .scene3d {
+        display: flex;
+      }
+
+      .scene3d-stage {
+        position: relative;
+        width: min(72vw, 660px);
+        height: min(72vw, 660px);
+        transform: rotateX(60deg) rotateZ(-35deg);
+        transform-style: preserve-3d;
+      }
+
+      .dock-base,
+      .ship-body {
+        position: absolute;
+        border: 2px solid rgba(116, 151, 193, 0.35);
+        transform-style: preserve-3d;
+        cursor: pointer;
+      }
+
+      .dock-base {
+        left: 5%;
+        top: 46%;
+        width: 320px;
+        height: 300px;
+        background: linear-gradient(180deg, #cbd5e1, #94a3b8);
+        box-shadow: 0 22px 40px rgba(15, 23, 42, 0.12);
+      }
+
+      .dock-base.selected,
+      .ship-body.selected {
+        border-color: rgba(71, 180, 255, 0.92);
+        box-shadow: 0 0 0 1px rgba(71, 180, 255, 0.5), 0 18px 40px rgba(30, 64, 175, 0.26);
+      }
+
+      .dock-warehouse {
+        position: absolute;
+        top: 28px;
+        left: 34px;
+        width: 74px;
+        height: 120px;
+        background: linear-gradient(180deg, #9f1239, #6b0f2e);
+        transform: translateZ(18px);
+      }
+
+      .dock-crane-rail {
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 34px;
+        height: 100%;
+        border-left: 1px solid rgba(245, 158, 11, 0.45);
+        background: rgba(245, 158, 11, 0.13);
+      }
+
+      .dock-crane-arm {
+        position: absolute;
+        top: 124px;
+        left: -130px;
+        width: 150px;
+        height: 10px;
+        background: linear-gradient(90deg, #f59e0b, #fde68a);
+        transform: translateZ(90px);
+      }
+
+      .dock-crane-column {
+        position: absolute;
+        top: 72px;
+        left: 14px;
+        width: 8px;
+        height: 120px;
+        background: linear-gradient(180deg, #f59e0b, #b45309);
+        transform: translateZ(46px) rotateX(90deg);
+      }
+
+      .dock-crane-box {
+        position: absolute;
+        width: 18px;
+        height: 18px;
+        background: #334155;
+        transition: transform 220ms ease;
+      }
+
+      .scene-label {
+        position: absolute;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.82);
+        color: #1e293b;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.03em;
+        box-shadow: 0 8px 24px rgba(15, 23, 42, 0.1);
+      }
+
+      .dock-base .scene-label {
+        left: 20px;
+        top: -20px;
+        transform: translateZ(120px) rotateX(90deg) rotateY(35deg);
+      }
+
+      .ship-body {
+        top: 53%;
+        left: 360px;
+        width: 180px;
+        height: 60px;
+        background: linear-gradient(180deg, #475569, #334155);
+        transition: transform 90ms linear;
+      }
+
+      .ship-container,
+      .ship-bridge {
+        position: absolute;
+      }
+
+      .ship-container {
+        top: 12px;
+        left: 28px;
+        width: 86px;
+        height: 34px;
+        background: linear-gradient(180deg, #f59e0b, #b45309);
+        transform: translateZ(16px);
+      }
+
+      .ship-bridge {
+        right: 12px;
+        top: 10px;
+        width: 36px;
+        height: 38px;
+        background: linear-gradient(180deg, #f8fafc, #dbeafe);
+        transform: translateZ(26px);
+      }
+
+      .ship-body .scene-label {
+        left: 34px;
+        top: -12px;
+        transform: translateZ(84px) rotateX(90deg) rotateY(35deg);
+      }
+
+      .edge-layer,
+      .hud-layer {
+        position: absolute;
+        inset: 0;
+      }
+
+      .edge-layer {
+        z-index: 22;
+        pointer-events: none;
+      }
+
+      .hud-layer {
+        z-index: 30;
+      }
+
+      .node-card {
+        position: absolute;
+        width: 192px;
+        padding: 14px 16px;
+        border-radius: 18px;
+        border: 2px solid rgba(105, 135, 175, 0.22);
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.98));
+        box-shadow: var(--shadow);
+        cursor: grab;
+        user-select: none;
+        transition: border-color 180ms ease, transform 180ms ease, box-shadow 180ms ease;
+      }
+
+      .node-card:hover {
+        transform: translateY(-1px);
+      }
+
+      .node-card.selected {
+        border-color: rgba(71, 180, 255, 0.88);
+        box-shadow: 0 0 0 1px rgba(71, 180, 255, 0.22), 0 18px 40px rgba(37, 99, 235, 0.2);
+      }
+
+      .node-card.hazard:not(.selected) {
+        border-color: rgba(251, 113, 133, 0.48);
+        background: linear-gradient(180deg, rgba(255, 241, 242, 0.98), rgba(255, 228, 230, 0.96));
+      }
+
+      .viewport.mode-3d .node-card {
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(248, 250, 252, 0.78));
+        backdrop-filter: blur(14px);
+      }
+
+      .node-title {
+        font-size: 14px;
+        font-weight: 700;
+      }
+
+      .node-meta {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-top: 10px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .run-indicator {
+        position: relative;
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        background: #10b981;
+      }
+
+      .run-indicator::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        background: rgba(16, 185, 129, 0.45);
+        animation: pulse 1.5s infinite;
+      }
+
+      .inspector-grid {
+        display: grid;
+        grid-template-rows: minmax(0, 1fr) minmax(260px, 44%);
+        height: 100%;
+      }
+
+      .inspector-section {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+      }
+
+      .inspector-section + .inspector-section {
+        border-top: 1px solid var(--line);
+      }
+
+      .section-title {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 700;
+        margin-bottom: 14px;
+      }
+
+      .markdown-view,
+      .chat-log {
+        min-height: 0;
+        overflow: auto;
+        border-radius: 16px;
+        border: 1px solid rgba(86, 113, 150, 0.2);
+        background: rgba(255, 255, 255, 0.72);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+      }
+
+      .markdown-view {
+        padding: 18px;
+        font-family: Consolas, "SFMono-Regular", monospace;
+        line-height: 1.7;
+        font-size: 13px;
+      }
+
+      .markdown-view h3,
+      .markdown-view h4 {
+        margin: 0 0 10px;
+      }
+
+      .markdown-view h3 {
+        font-size: 18px;
+      }
+
+      .markdown-view h4 {
+        font-size: 14px;
+        color: #334155;
+      }
+
+      .markdown-view strong {
+        color: #1d4ed8;
+      }
+
+      .markdown-view .pill {
+        display: inline-block;
+        padding: 2px 8px;
+        margin: 0 2px;
+        border-radius: 999px;
+        background: rgba(240, 253, 250, 0.95);
+        color: #047857;
+        border: 1px solid rgba(5, 150, 105, 0.18);
+      }
+
+      .markdown-view ul {
+        margin: 8px 0 0 18px;
+        padding: 0;
+      }
+
+      .markdown-view li {
+        margin-bottom: 6px;
+        color: #334155;
+      }
+
+      .chat-log {
+        display: grid;
+        gap: 12px;
+        padding: 16px;
+      }
+
+      .chat-bubble {
+        max-width: 84%;
+        padding: 12px 14px;
+        border-radius: 18px;
+        font-size: 13px;
+        line-height: 1.6;
+      }
+
+      .chat-bubble.user {
+        margin-left: auto;
+        background: linear-gradient(135deg, #2563eb, #1d4ed8);
+        color: white;
+        border-top-right-radius: 6px;
+      }
+
+      .chat-bubble.agent {
+        background: rgba(255, 255, 255, 0.96);
+        border: 1px solid rgba(86, 113, 150, 0.24);
+        border-top-left-radius: 6px;
+      }
+
+      .chat-form {
+        display: flex;
+        gap: 10px;
+        margin-top: 14px;
+      }
+
+      .chat-input {
+        flex: 1;
+        min-width: 0;
+        padding: 14px 16px;
+        border-radius: 14px;
+        border: 1px solid rgba(86, 113, 150, 0.26);
+        background: rgba(255, 255, 255, 0.92);
+        color: var(--text);
+        outline: none;
+      }
+
+      .chat-input:focus {
+        border-color: rgba(71, 180, 255, 0.5);
+        box-shadow: 0 0 0 3px rgba(71, 180, 255, 0.14);
+      }
+
+      .send-btn {
+        min-width: 52px;
+        border-radius: 14px;
+        background: linear-gradient(135deg, #2563eb, #1e40af);
+        font-size: 18px;
+      }
+
+      .send-btn:disabled,
+      .chat-input:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+      }
+
+      .typing {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+      }
+
+      .typing span {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: rgba(37, 99, 235, 0.5);
+        animation: typing 1s infinite ease-in-out;
+      }
+
+      .typing span:nth-child(2) {
+        animation-delay: 0.16s;
+      }
+
+      .typing span:nth-child(3) {
+        animation-delay: 0.32s;
+      }
+
+      .drop-flash {
+        position: absolute;
+        inset: 0;
+        z-index: 8;
+        border: 1px dashed rgba(71, 180, 255, 0.55);
+        background: rgba(71, 180, 255, 0.06);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 120ms ease;
+      }
+
+      .viewport.drag-over .drop-flash {
+        opacity: 1;
+      }
+
+      .footnote {
+        margin-top: 12px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      @keyframes pulse {
+        0% {
+          transform: scale(1);
+          opacity: 0.9;
+        }
+        100% {
+          transform: scale(2.8);
+          opacity: 0;
+        }
+      }
+
+      @keyframes dash {
+        to {
+          stroke-dashoffset: -18;
+        }
+      }
+
+      @keyframes typing {
+        0%,
+        80%,
+        100% {
+          transform: translateY(0);
+          opacity: 0.3;
+        }
+        40% {
+          transform: translateY(-4px);
+          opacity: 1;
+        }
+      }
+
+      @media (max-width: 1280px) {
+        .layout {
+          grid-template-columns: 236px minmax(0, 1fr) 320px;
+        }
+      }
+
+      @media (max-width: 1080px) {
+        .layout {
+          grid-template-columns: 1fr;
+          min-height: auto;
+        }
+
+        .sidebar,
+        .inspector {
+          border: 0;
+          border-bottom: 1px solid var(--line);
+        }
+
+        .viewport {
+          min-height: 62vh;
+        }
+
+        .inspector-grid {
+          grid-template-rows: auto auto;
+        }
+      }
+
+      @media (max-width: 720px) {
+        .topbar {
+          padding: 14px;
+        }
+
+        .toolbar {
+          justify-content: stretch;
+        }
+
+        .segmented,
+        .run-btn {
+          width: 100%;
+          justify-content: center;
+        }
+
+        .node-card {
+          width: 170px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-badge">⌘</div>
+          <div>
+            <h1>NeuroSim Agent Platform</h1>
+            <small>2D 逻辑层与 3D 物理场景的混合推演原型</small>
+          </div>
+        </div>
+        <div class="toolbar">
+          <div class="segmented" id="viewToggle">
+            <button type="button" data-view="2d">2D 逻辑拓扑</button>
+            <button type="button" data-view="3d">3D 物理场景</button>
+          </div>
+          <button type="button" class="run-btn" id="runBtn">▶ 编译并运行</button>
+        </div>
+      </header>
+
+      <div class="layout">
+        <aside class="sidebar">
+          <div class="panel-header">
+            <div class="panel-icon">◫</div>
+            <div>仿真实体库</div>
+          </div>
+          <div class="sidebar-body">
+            <div class="sidebar-note">无论在 2D 还是 3D 模式，都可以把实体拖入中间画布；3D 实体会在物理场景中使用固定模型锚点。</div>
+            <div class="library-list" id="libraryList"></div>
+            <div class="footnote">当前页面为单文件演示版，直接打开即可交互。</div>
+          </div>
+        </aside>
+
+        <section class="viewport mode-2d" id="viewport">
+          <div class="mode-chip" id="modeChip"></div>
+          <div class="drop-flash"></div>
+          <div class="scene3d" id="scene3d"></div>
+          <svg class="edge-layer" id="edgeLayer"></svg>
+          <div class="hud-layer" id="hudLayer"></div>
+        </section>
+
+        <aside class="inspector">
+          <div class="inspector-grid">
+            <section class="inspector-section">
+              <div class="section-title">
+                <div class="panel-icon">¶</div>
+                <div>实体行为配置</div>
+              </div>
+              <div class="markdown-view" id="markdownView"></div>
+            </section>
+
+            <section class="inspector-section">
+              <div class="section-title">
+                <div class="panel-icon">✦</div>
+                <div>行为定义 Assistant</div>
+              </div>
+              <div class="chat-log" id="chatLog"></div>
+              <form class="chat-form" id="chatForm">
+                <input class="chat-input" id="chatInput" type="text" placeholder="与 Agent 对话修改规则..." />
+                <button class="send-btn" id="sendBtn" type="submit">➤</button>
+              </form>
+            </section>
+          </div>
+        </aside>
+      </div>
+    </div>
+
+    <script>
+      const entityLibrary = [
+        {
+          type: 'port',
+          label: '⚓ 新建港口',
+          desc: '拖入后可作为新的港口规划节点。',
+          md: '### 实体: 新建港口\n\n**当前状态**: 规划中\n**吞吐能力**: 5000 TEU/天\n\n#### 行为规则\n- [常态] 接收并处理进港请求。\n- [规划] 需 Agent 进一步补充调度规则...'
+        },
+        {
+          type: 'ship',
+          label: '🚢 新建货轮',
+          desc: '拖入后可定义新的航运单元。',
+          md: '### 实体: 新建货轮\n\n**当前状态**: 停泊/待命\n**当前航速**: 0 节\n**目的地**: 待定\n\n#### 行为规则\n- [常态] 等待启航指令。\n- [规划] 需 Agent 进一步补充航线与避险规则...'
+        },
+        {
+          type: 'hazard',
+          label: '🌪️ 异常气候/事件',
+          desc: '适合作为宏观逻辑层的干涉节点。',
+          md: '### 实体: 异常事件\n\n**当前状态**: 潜在威胁\n**影响半径**: 100 海里\n\n#### 行为规则\n- [常态] 监控气象数据。\n- [广播] 警告周边所有船只减速。'
+        }
+      ];
+
+      const initialNodes = [
+        {
+          id: 'port_1',
+          type: 'port',
+          label: '⚓ 上海港 (枢纽)',
+          x: 450,
+          y: 150,
+          md: '### 实体: 上海港\n\n**当前状态**: 正常运营\n**堆场余量**: 25%\n\n#### 行为规则\n- [常态] 接收到进港请求时，分配 1 号泊位和桥吊。\n- [作业] 桥吊开始卸载集装箱。'
+        },
+        {
+          id: 'ship_1',
+          type: 'ship',
+          label: '🚢 远洋货轮 001',
+          x: 100,
+          y: 350,
+          md: '### 实体: 远洋货轮 001\n\n**当前状态**: 航行中\n**载箱量**: 1200 TEU\n**目的地**: 上海港\n\n#### 行为规则\n- [常态] 沿预定航线向目的地行驶。\n- [靠泊] 到达港口后，执行靠泊并等待卸货。'
+        },
+        {
+          id: 'hazard_1',
+          type: 'hazard',
+          label: '🌪️ 台风 "梅花" (2D抽象)',
+          x: 150,
+          y: 80,
+          md: '### 实体: 台风 "梅花"\n\n**当前状态**: 活跃\n**风力等级**: 12级\n\n#### 行为规则\n- [常态] 在2D图层监控区域风险。\n- [干涉] 对关联的3D物理实体施加影响。'
+        }
+      ];
+
+      const initialEdges = [
+        { id: 'edge_1', source: 'ship_1', target: 'port_1', type: 'route', status: 'active' },
+        { id: 'edge_2', source: 'hazard_1', target: 'ship_1', type: 'impact', status: 'warning' }
+      ];
+
+      const state = {
+        nodes: structuredClone(initialNodes),
+        edges: structuredClone(initialEdges),
+        selectedNodeId: 'hazard_1',
+        viewMode: '2d',
+        chatMessages: [
+          {
+            role: 'agent',
+            content: '提示：切换到【3D 物理场景】并点击【编译并运行】。您可以自由拖拽 2D 图层的台风节点，连线会自动追踪移动的 3D 货轮。'
+          }
+        ],
+        inputText: '',
+        isRunning: false,
+        isTyping: false,
+        simProgress: 0,
+        draggingNodeId: null,
+        dragOffset: { x: 0, y: 0 },
+        runTimer: null
+      };
+
+      const viewport = document.getElementById('viewport');
+      const scene3d = document.getElementById('scene3d');
+      const hudLayer = document.getElementById('hudLayer');
+      const edgeLayer = document.getElementById('edgeLayer');
+      const libraryList = document.getElementById('libraryList');
+      const markdownView = document.getElementById('markdownView');
+      const chatLog = document.getElementById('chatLog');
+      const chatForm = document.getElementById('chatForm');
+      const chatInput = document.getElementById('chatInput');
+      const sendBtn = document.getElementById('sendBtn');
+      const runBtn = document.getElementById('runBtn');
+      const modeChip = document.getElementById('modeChip');
+      const viewToggle = document.getElementById('viewToggle');
+
+      function is3DNode(nodeId) {
+        return nodeId === 'port_1' || nodeId === 'ship_1';
+      }
+
+      function selectedNode() {
+        return state.nodes.find((node) => node.id === state.selectedNodeId) || null;
+      }
+
+      function escapeHtml(text) {
+        return text
+          .replaceAll('&', '&amp;')
+          .replaceAll('<', '&lt;')
+          .replaceAll('>', '&gt;')
+          .replaceAll('"', '&quot;')
+          .replaceAll("'", '&#39;');
+      }
+
+      function renderMarkdown(text) {
+        const escaped = escapeHtml(text);
+        const lines = escaped.split('\n');
+        let html = '';
+        let inList = false;
+
+        const flushList = () => {
+          if (inList) {
+            html += '</ul>';
+            inList = false;
+          }
+        };
+
+        for (const line of lines) {
+          if (!line.trim()) {
+            flushList();
+            html += '<div style="height:8px"></div>';
+            continue;
+          }
+
+          if (line.startsWith('### ')) {
+            flushList();
+            html += '<h3>' + line.slice(4) + '</h3>';
+            continue;
+          }
+
+          if (line.startsWith('#### ')) {
+            flushList();
+            html += '<h4>' + line.slice(5) + '</h4>';
+            continue;
+          }
+
+          if (line.startsWith('- ')) {
+            if (!inList) {
+              html += '<ul>';
+              inList = true;
+            }
+            html += '<li>' + formatInlineMarkdown(line.slice(2)) + '</li>';
+            continue;
+          }
+
+          flushList();
+          html += '<div>' + formatInlineMarkdown(line) + '</div>';
+        }
+
+        flushList();
+        return html;
+      }
+
+      function formatInlineMarkdown(text) {
+        return text
+          .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+          .replace(/\[(.*?)\]/g, '<span class="pill">$1</span>');
+      }
+
+      function shipTranslateX() {
+        return state.simProgress < 50 ? 200 - state.simProgress * 4 : 0;
+      }
+
+      function craneTranslateY() {
+        if (state.simProgress > 60 && state.simProgress < 90) {
+          return state.simProgress % 10 > 5 ? -20 : 0;
+        }
+        return -40;
+      }
+
+      function getEdgePoint(nodeId) {
+        const viewportRect = viewport.getBoundingClientRect();
+        if (state.viewMode === '3d' && is3DNode(nodeId)) {
+          const sceneNode = viewport.querySelector('[data-scene-node="' + nodeId + '"]');
+          if (sceneNode) {
+            const rect = sceneNode.getBoundingClientRect();
+            return {
+              x: rect.left - viewportRect.left + rect.width / 2,
+              y: rect.top - viewportRect.top + rect.height / 2
+            };
+          }
+        }
+
+        const node = state.nodes.find((item) => item.id === nodeId);
+        if (!node) {
+          return { x: 0, y: 0 };
+        }
+
+        return { x: node.x + 96, y: node.y + 44 };
+      }
+
+      function renderLibrary() {
+        libraryList.innerHTML = entityLibrary
+          .map(
+            (item, index) =>
+              '<div class="library-item" draggable="true" data-library-index="' +
+              index +
+              '"><strong>' +
+              item.label +
+              '</strong><small>' +
+              item.desc +
+              '</small></div>'
+          )
+          .join('');
+      }
+
+      function renderTopbar() {
+        runBtn.classList.toggle('running', state.isRunning);
+        runBtn.textContent = state.isRunning ? '■ 终止推演' : '▶ 编译并运行';
+
+        for (const button of viewToggle.querySelectorAll('button')) {
+          button.classList.toggle('active', button.dataset.view === state.viewMode);
+        }
+
+        if (state.viewMode === '3d') {
+          modeChip.innerHTML = '<strong>3D 混合 HUD 模式</strong><span>纯 2D 逻辑节点会悬浮在物理场景之上</span>';
+        } else {
+          modeChip.innerHTML = '<strong>2D 拓扑层</strong><span>用于规划宏观逻辑、状态机与干涉关系</span>';
+        }
+      }
+
+      function renderScene3D() {
+        if (state.viewMode !== '3d') {
+          scene3d.innerHTML = '';
+          return;
+        }
+
+        const dockClass = state.selectedNodeId === 'port_1' ? 'dock-base selected' : 'dock-base';
+        const shipClass = state.selectedNodeId === 'ship_1' ? 'ship-body selected' : 'ship-body';
+
+        scene3d.innerHTML =
+          '<div class="scene3d-stage">' +
+          '<div class="' +
+          dockClass +
+          '" data-scene-node="port_1">' +
+          '<div class="dock-warehouse"></div>' +
+          '<div class="dock-crane-rail">' +
+          '<div class="dock-crane-arm"></div>' +
+          '<div class="dock-crane-column"></div>' +
+          '<div class="dock-crane-box" style="transform: translateZ(' +
+          (100 + craneTranslateY()) +
+          'px) translateX(-46px)"></div>' +
+          '</div>' +
+          '<div class="scene-label">上海港</div>' +
+          '</div>' +
+          '<div class="' +
+          shipClass +
+          '" data-scene-node="ship_1" style="transform: translateX(' +
+          shipTranslateX() +
+          'px) translateZ(14px)">' +
+          '<div class="ship-container"></div>' +
+          '<div class="ship-bridge"></div>' +
+          '<div class="scene-label">货轮001</div>' +
+          '</div>' +
+          '</div>';
+      }
+
+      function renderHudNodes() {
+        hudLayer.innerHTML = state.nodes
+          .filter((node) => !(state.viewMode === '3d' && is3DNode(node.id)))
+          .map((node) => {
+            const classes = ['node-card', node.type];
+            if (state.selectedNodeId === node.id) {
+              classes.push('selected');
+            }
+
+            return (
+              '<div class="' +
+              classes.join(' ') +
+              '" data-node-id="' +
+              node.id +
+              '" style="left:' +
+              node.x +
+              'px;top:' +
+              node.y +
+              'px">' +
+              '<div class="node-title">' +
+              node.label +
+              '</div>' +
+              '<div class="node-meta"><span>类型: ' +
+              node.type +
+              '</span>' +
+              (state.isRunning ? '<span class="run-indicator"></span>' : '<span>静态</span>') +
+              '</div>' +
+              '</div>'
+            );
+          })
+          .join('');
+      }
+
+      function renderEdges() {
+        const width = viewport.clientWidth;
+        const height = viewport.clientHeight;
+        edgeLayer.setAttribute('viewBox', '0 0 ' + width + ' ' + height);
+        edgeLayer.innerHTML = state.edges
+          .map((edge) => {
+            const start = getEdgePoint(edge.source);
+            const end = getEdgePoint(edge.target);
+
+            if (!start.x && !start.y) {
+              return '';
+            }
+
+            const cp1x = start.x + (end.x - start.x) / 2;
+            const path =
+              'M ' +
+              start.x +
+              ' ' +
+              start.y +
+              ' C ' +
+              cp1x +
+              ' ' +
+              start.y +
+              ', ' +
+              cp1x +
+              ' ' +
+              end.y +
+              ', ' +
+              end.x +
+              ' ' +
+              end.y;
+            const color = edge.type === 'impact' ? '#fb7185' : '#47b4ff';
+            const dash = edge.type === 'impact' ? '4 4' : '8 8';
+            const midY = start.y + (end.y - start.y) / 2;
+            const label = edge.type === 'impact' ? '干涉' : '航线';
+            const animatedStyle = state.isRunning ? ' style="animation: dash 2s linear infinite"' : '';
+
+            return (
+              '<g>' +
+              '<path d="' +
+              path +
+              '" fill="none" stroke="#e2e8f0" stroke-width="7"></path>' +
+              '<path d="' +
+              path +
+              '" fill="none" stroke="' +
+              color +
+              '" stroke-width="2" stroke-dasharray="' +
+              dash +
+              '"' +
+              animatedStyle +
+              '></path>' +
+              '<rect x="' +
+              (cp1x - 22) +
+              '" y="' +
+              (midY - 12) +
+              '" width="44" height="24" rx="6" fill="rgba(255,255,255,0.92)" stroke="rgba(148,163,184,0.35)"></rect>' +
+              '<text x="' +
+              cp1x +
+              '" y="' +
+              (midY + 4) +
+              '" fill="' +
+              color +
+              '" font-size="11" font-weight="700" text-anchor="middle">' +
+              label +
+              '</text>' +
+              '</g>'
+            );
+          })
+          .join('');
+      }
+
+      function renderInspector() {
+        const node = selectedNode();
+        markdownView.innerHTML = node
+          ? renderMarkdown(node.md)
+          : '<div class="empty-state">选择实体查看逻辑</div>';
+
+        chatLog.innerHTML = state.chatMessages
+          .map((message) => {
+            if (message.role === 'typing') {
+              return '<div class="chat-bubble agent"><span class="typing"><span></span><span></span><span></span></span></div>';
+            }
+
+            return '<div class="chat-bubble ' + message.role + '">' + escapeHtml(message.content) + '</div>';
+          })
+          .join('');
+
+        chatLog.scrollTop = chatLog.scrollHeight;
+        chatInput.value = state.inputText;
+        chatInput.disabled = state.isTyping;
+        sendBtn.disabled = !state.inputText.trim() || state.isTyping;
+      }
+
+      function renderViewport() {
+        viewport.classList.toggle('mode-2d', state.viewMode === '2d');
+        viewport.classList.toggle('mode-3d', state.viewMode === '3d');
+        renderScene3D();
+        renderHudNodes();
+        renderEdges();
+      }
+
+      function renderAll() {
+        renderTopbar();
+        renderViewport();
+        renderInspector();
+      }
+
+      function selectNode(nodeId) {
+        state.selectedNodeId = nodeId;
+        renderAll();
+      }
+
+      function updateNodePosition(nodeId, x, y) {
+        const maxX = Math.max(0, viewport.clientWidth - 204);
+        const maxY = Math.max(0, viewport.clientHeight - 104);
+        const nextX = Math.min(Math.max(0, x), maxX);
+        const nextY = Math.min(Math.max(0, y), maxY);
+
+        state.nodes = state.nodes.map((node) =>
+          node.id === nodeId
+            ? {
+                ...node,
+                x: nextX,
+                y: nextY
+              }
+            : node
+        );
+      }
+
+      function startRunLoop() {
+        stopRunLoop();
+        state.runTimer = window.setInterval(() => {
+          state.simProgress = Math.min(100, state.simProgress + 1);
+          if (state.simProgress >= 100) {
+            state.isRunning = false;
+            stopRunLoop();
+          }
+          renderAll();
+        }, 50);
+      }
+
+      function stopRunLoop() {
+        if (state.runTimer) {
+          window.clearInterval(state.runTimer);
+          state.runTimer = null;
+        }
+      }
+
+      function toggleRun() {
+        state.isRunning = !state.isRunning;
+        if (state.isRunning) {
+          state.simProgress = 0;
+          startRunLoop();
+        } else {
+          state.simProgress = 0;
+          stopRunLoop();
+        }
+        renderAll();
+      }
+
+      function addNodeFromTemplate(template, clientX, clientY) {
+        const rect = viewport.getBoundingClientRect();
+        const newId = template.type + '_' + Date.now();
+        const x = clientX - rect.left - 96;
+        const y = clientY - rect.top - 44;
+        state.nodes.push({
+          id: newId,
+          type: template.type,
+          label: template.label,
+          x,
+          y,
+          md: template.md
+        });
+        state.selectedNodeId = newId;
+        renderAll();
+      }
+
+      libraryList.addEventListener('dragstart', (event) => {
+        const element = event.target.closest('.library-item');
+        if (!element) {
+          return;
+        }
+        const item = entityLibrary[Number(element.dataset.libraryIndex)];
+        event.dataTransfer.setData('application/json', JSON.stringify(item));
+        event.dataTransfer.effectAllowed = 'copy';
+      });
+
+      viewToggle.addEventListener('click', (event) => {
+        const button = event.target.closest('button[data-view]');
+        if (!button || button.dataset.view === state.viewMode) {
+          return;
+        }
+        state.viewMode = button.dataset.view;
+        renderAll();
+      });
+
+      runBtn.addEventListener('click', toggleRun);
+
+      viewport.addEventListener('dragover', (event) => {
+        event.preventDefault();
+        viewport.classList.add('drag-over');
+        event.dataTransfer.dropEffect = 'copy';
+      });
+
+      viewport.addEventListener('dragleave', (event) => {
+        if (event.target === viewport) {
+          viewport.classList.remove('drag-over');
+        }
+      });
+
+      viewport.addEventListener('drop', (event) => {
+        event.preventDefault();
+        viewport.classList.remove('drag-over');
+        const payload = event.dataTransfer.getData('application/json');
+        if (!payload) {
+          return;
+        }
+
+        try {
+          addNodeFromTemplate(JSON.parse(payload), event.clientX, event.clientY);
+        } catch (error) {
+          console.error(error);
+        }
+      });
+
+      viewport.addEventListener('mousedown', (event) => {
+        const sceneNode = event.target.closest('[data-scene-node]');
+        if (sceneNode) {
+          const nodeId = sceneNode.dataset.sceneNode;
+          state.selectedNodeId = nodeId;
+          renderAll();
+          return;
+        }
+
+        const card = event.target.closest('[data-node-id]');
+        if (!card) {
+          return;
+        }
+
+        const nodeId = card.dataset.nodeId;
+        const node = state.nodes.find((item) => item.id === nodeId);
+        if (!node) {
+          return;
+        }
+
+        state.selectedNodeId = nodeId;
+
+        if (state.viewMode === '3d' && is3DNode(nodeId)) {
+          renderAll();
+          return;
+        }
+
+        const rect = viewport.getBoundingClientRect();
+        state.draggingNodeId = nodeId;
+        state.dragOffset = {
+          x: event.clientX - rect.left - node.x,
+          y: event.clientY - rect.top - node.y
+        };
+        renderAll();
+      });
+
+      window.addEventListener('mousemove', (event) => {
+        if (!state.draggingNodeId) {
+          return;
+        }
+        const rect = viewport.getBoundingClientRect();
+        updateNodePosition(
+          state.draggingNodeId,
+          event.clientX - rect.left - state.dragOffset.x,
+          event.clientY - rect.top - state.dragOffset.y
+        );
+        renderViewport();
+        renderInspector();
+      });
+
+      window.addEventListener('mouseup', () => {
+        state.draggingNodeId = null;
+      });
+
+      chatInput.addEventListener('input', (event) => {
+        state.inputText = event.target.value;
+        renderInspector();
+      });
+
+      chatForm.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const text = state.inputText.trim();
+        const node = selectedNode();
+        if (!text || !node || state.isTyping) {
+          return;
+        }
+
+        state.chatMessages.push({ role: 'user', content: text });
+        state.chatMessages.push({ role: 'typing', content: '' });
+        state.inputText = '';
+        state.isTyping = true;
+        renderInspector();
+
+        window.setTimeout(() => {
+          state.nodes = state.nodes.map((item) =>
+            item.id === state.selectedNodeId
+              ? {
+                  ...item,
+                  md: item.md + '\n- [新增] ' + text
+                }
+              : item
+          );
+          state.chatMessages = state.chatMessages.filter((message) => message.role !== 'typing');
+          state.chatMessages.push({ role: 'agent', content: '规则已更新。' });
+          state.isTyping = false;
+          renderAll();
+        }, 900);
+      });
+
+      window.addEventListener('resize', renderViewport);
+
+      renderLibrary();
+      renderAll();
+    </script>
+  </body>
+</html>
