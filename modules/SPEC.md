@@ -4,7 +4,7 @@
 
 ## 交互机制
 
-模块间所有的函数调用都包装成事件（Event）以形成异步互动。
+模块间所有的函数调用都包装成事件（Event）以完成异步或同步（通过异步模拟）互动。
 
 ### 1. 模块类型 (Type)
 * **实体 (Entity)**：如 AGV、起重机。**必须**包含 `visuals`、`stateMachine` 和 `memory`。实体不能统揽全局，只能通过 `context.emitAsync` 广播状态，或暴露 `actions` 供外部调用。

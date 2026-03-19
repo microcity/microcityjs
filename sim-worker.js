@@ -2,6 +2,12 @@ import * as Comlink from 'https://esm.sh/comlink';
 import TinyQueue from 'https://esm.sh/tinyqueue';
 import { randomExponential, randomUniform } from 'https://esm.sh/d3-random';
 
+const FRAME_MESSAGE_TYPE = 'frame-buffer';
+const FRAME_HEADER_BYTES = 24;
+const FRAME_OBJECT_STRIDE = 48;
+const ENTITY_KIND_SERVER = 1;
+const ENTITY_KIND_CARGO = 2;
+
 class Queue {
   constructor(capacity) {
     this.capacity = Math.max(1, Math.floor(Number(capacity) || 1));
@@ -81,23 +87,25 @@ class Cargo {
     this.node.rotation = Cargo.yawToQuaternion(this.baseRotationY + simTime * 1.15);
   }
 
-  toRenderObject(includeModel, modelData) {
-    return {
-      id: `item-${this.id}`,
-      state: this.status,
-      node: {
-        translation: [...this.node.translation],
-        rotation: [...this.node.rotation],
-        scale: [...this.node.scale]
-      },
-      model: includeModel
-        ? {
-            format: 'gltf',
-            path: this.modelPath,
-            data: modelData
-          }
-        : null
-    };
+  writeFrameRecord(view, offset) {
+    view.setUint8(offset, ENTITY_KIND_CARGO);
+    view.setUint8(offset + 1, this.status);
+    view.setUint16(offset + 2, 0, true);
+    view.setUint32(offset + 4, this.id, true);
+
+    let cursor = offset + 8;
+    for (let i = 0; i < 3; i += 1) {
+      view.setFloat32(cursor, this.node.translation[i], true);
+      cursor += 4;
+    }
+    for (let i = 0; i < 4; i += 1) {
+      view.setFloat32(cursor, this.node.rotation[i], true);
+      cursor += 4;
+    }
+    for (let i = 0; i < 3; i += 1) {
+      view.setFloat32(cursor, this.node.scale[i], true);
+      cursor += 4;
+    }
   }
 }
 
@@ -158,23 +166,25 @@ class Server {
     return done;
   }
 
-  toRenderObject(includeModel, modelData) {
-    return {
-      id: 'server',
-      state: this.isBusy ? 1 : 0,
-      node: {
-        translation: [...this.node.translation],
-        rotation: [...this.node.rotation],
-        scale: [...this.node.scale]
-      },
-      model: includeModel
-        ? {
-            format: 'gltf',
-            path: this.modelPath,
-            data: modelData
-          }
-        : null
-    };
+  writeFrameRecord(view, offset) {
+    view.setUint8(offset, ENTITY_KIND_SERVER);
+    view.setUint8(offset + 1, this.isBusy ? 1 : 0);
+    view.setUint16(offset + 2, 0, true);
+    view.setUint32(offset + 4, 0, true);
+
+    let cursor = offset + 8;
+    for (let i = 0; i < 3; i += 1) {
+      view.setFloat32(cursor, this.node.translation[i], true);
+      cursor += 4;
+    }
+    for (let i = 0; i < 4; i += 1) {
+      view.setFloat32(cursor, this.node.rotation[i], true);
+      cursor += 4;
+    }
+    for (let i = 0; i < 3; i += 1) {
+      view.setFloat32(cursor, this.node.scale[i], true);
+      cursor += 4;
+    }
   }
 }
 
@@ -207,7 +217,6 @@ class Simulator {
 
     this.queue = new Queue(this.config.queueCapacity);
     this.items = new Map();
-    this.sentModelIds = new Set();
     this.nextEntityId = 1;
     this.nextEventOrder = 0;
     this.eventQueue = new TinyQueue([], Simulator.compareEvents);
@@ -227,8 +236,6 @@ class Simulator {
 
     this.cargoModelPath = './data/cargo.gltf';
     this.serverModelPath = './data/server.gltf';
-    this.cargoModelData = null;
-    this.serverModelData = null;
 
     this.server = new Server(this.serverModelPath, () => this.random.sampleServiceInterval());
   }
@@ -240,36 +247,6 @@ class Simulator {
       queueCapacity: Math.max(1, Math.floor(Number(rawConfig.queueCapacity) || 12)),
       duration: Math.max(1, Number(rawConfig.duration) || 60)
     };
-  }
-
-  async loadModelFromPath(path, fallback) {
-    try {
-      const response = await fetch(path, { cache: 'no-store' });
-      if (!response.ok) {
-        return fallback;
-      }
-      return await response.json();
-    } catch {
-      return fallback;
-    }
-  }
-
-  async preloadModels() {
-    if (!this.cargoModelData) {
-      this.cargoModelData = await this.loadModelFromPath(this.cargoModelPath, {
-        asset: { version: '2.0' },
-        meshes: [{ primitives: [{ extras: { primitiveType: 'box', size: [0.8, 0.8, 0.8] } }] }],
-        materials: [{ pbrMetallicRoughness: { baseColorFactor: [0.62, 0.35, 0.88, 1], metallicFactor: 0.2, roughnessFactor: 0.45 } }]
-      });
-    }
-
-    if (!this.serverModelData) {
-      this.serverModelData = await this.loadModelFromPath(this.serverModelPath, {
-        asset: { version: '2.0' },
-        meshes: [{ primitives: [{ extras: { primitiveType: 'plane', size: [1.1, 1.1] } }] }],
-        materials: [{ pbrMetallicRoughness: { baseColorFactor: [0.15, 0.39, 0.92, 1], metallicFactor: 0, roughnessFactor: 0.8 } }]
-      });
-    }
   }
 
   rebuildRandomGenerators() {
@@ -291,7 +268,6 @@ class Simulator {
 
     this.queue.reset(this.config.queueCapacity);
     this.items.clear();
-    this.sentModelIds.clear();
     this.server.reset();
 
     this.nextEntityId = 1;
@@ -375,11 +351,34 @@ class Simulator {
 
     this.stats.served += 1;
     this.items.delete(completed.id);
-    this.sentModelIds.delete(`item-${completed.id}`);
 
     this.tryStartNextService();
     this.refreshItemTransforms();
     this.dirtyFrame = true;
+  }
+
+  buildFrameBuffer() {
+    const items = Array.from(this.items.values()).sort((left, right) => left.id - right.id);
+    const objectCount = items.length + 1;
+    const buffer = new ArrayBuffer(FRAME_HEADER_BYTES + objectCount * FRAME_OBJECT_STRIDE);
+    const view = new DataView(buffer);
+
+    view.setFloat64(0, this.stats.simTime, true);
+    view.setUint32(8, this.stats.arrived, true);
+    view.setUint32(12, this.stats.served, true);
+    view.setUint32(16, this.stats.dropped, true);
+    view.setUint32(20, objectCount, true);
+
+    let offset = FRAME_HEADER_BYTES;
+    this.server.writeFrameRecord(view, offset);
+    offset += FRAME_OBJECT_STRIDE;
+
+    for (let i = 0; i < items.length; i += 1) {
+      items[i].writeFrameRecord(view, offset);
+      offset += FRAME_OBJECT_STRIDE;
+    }
+
+    return buffer;
   }
 
   processOneStep() {
@@ -404,49 +403,13 @@ class Simulator {
     return true;
   }
 
-  buildFramePayload() {
-    const objects = [];
-
-    const serverId = 'server';
-    const includeServerModel = !this.sentModelIds.has(serverId);
-    if (includeServerModel) {
-      this.sentModelIds.add(serverId);
-    }
-    objects.push(this.server.toRenderObject(includeServerModel, this.serverModelData));
-
-    const itemObjects = Array.from(this.items.values())
-      .sort((left, right) => left.id - right.id)
-      .map((item) => {
-        const renderId = `item-${item.id}`;
-        const includeModel = !this.sentModelIds.has(renderId);
-        if (includeModel) {
-          this.sentModelIds.add(renderId);
-        }
-        return item.toRenderObject(includeModel, this.cargoModelData);
-      });
-
-    objects.push(...itemObjects);
-
-    return {
-      type: 'frame',
-      payload: {
-        stats: {
-          simTime: this.stats.simTime,
-          arrived: this.stats.arrived,
-          served: this.stats.served,
-          dropped: this.stats.dropped
-        },
-        objects
-      }
-    };
-  }
-
   postFrameIfNeeded() {
     if (!this.renderPort || !this.dirtyFrame) {
       return;
     }
 
-    this.renderPort.postMessage(this.buildFramePayload());
+    const buffer = this.buildFrameBuffer();
+    this.renderPort.postMessage({ type: FRAME_MESSAGE_TYPE, buffer }, [buffer]);
     this.dirtyFrame = false;
   }
 
@@ -519,7 +482,6 @@ class Simulator {
     this.config = this.normalizeConfig(rawConfig);
     this.rebuildRandomGenerators();
     this.resetState();
-    await this.preloadModels();
 
     this.scheduleArrival();
     this.postFrameIfNeeded();

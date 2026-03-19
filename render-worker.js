@@ -2,6 +2,12 @@ import * as Comlink from 'https://esm.sh/comlink';
 import * as THREE from 'https://esm.sh/three';
 import { WebGPURenderer } from 'https://esm.sh/three/webgpu';
 
+const FRAME_MESSAGE_TYPE = 'frame-buffer';
+const FRAME_HEADER_BYTES = 24;
+const FRAME_OBJECT_STRIDE = 48;
+const ENTITY_KIND_SERVER = 1;
+const ENTITY_KIND_CARGO = 2;
+
 class Render {
   constructor() {
     this.renderer = null;
@@ -26,6 +32,46 @@ class Render {
     this.maxRadius = 120;
     this.rotationSpeed = 1;
     this.translationSpeed = 1;
+
+    this.modelCatalog = new Map();
+    this.cargoModelPath = './data/cargo.gltf';
+    this.serverModelPath = './data/server.gltf';
+  }
+
+  async loadModelFromPath(path, fallback) {
+    try {
+      const response = await fetch(path, { cache: 'no-store' });
+      if (!response.ok) {
+        return fallback;
+      }
+      return await response.json();
+    } catch {
+      return fallback;
+    }
+  }
+
+  async preloadModels() {
+    if (!this.modelCatalog.has(ENTITY_KIND_CARGO)) {
+      this.modelCatalog.set(
+        ENTITY_KIND_CARGO,
+        await this.loadModelFromPath(this.cargoModelPath, {
+          asset: { version: '2.0' },
+          meshes: [{ primitives: [{ extras: { primitiveType: 'box', size: [0.8, 0.8, 0.8] } }] }],
+          materials: [{ pbrMetallicRoughness: { baseColorFactor: [0.62, 0.35, 0.88, 1], metallicFactor: 0.2, roughnessFactor: 0.45 } }]
+        })
+      );
+    }
+
+    if (!this.modelCatalog.has(ENTITY_KIND_SERVER)) {
+      this.modelCatalog.set(
+        ENTITY_KIND_SERVER,
+        await this.loadModelFromPath(this.serverModelPath, {
+          asset: { version: '2.0' },
+          meshes: [{ primitives: [{ extras: { primitiveType: 'plane', size: [1.1, 1.1] } }] }],
+          materials: [{ pbrMetallicRoughness: { baseColorFactor: [0.15, 0.39, 0.92, 1], metallicFactor: 0, roughnessFactor: 0.8 } }]
+        })
+      );
+    }
   }
 
   syncOrbitFromCamera() {
@@ -65,6 +111,8 @@ class Render {
     if (!globalThis.navigator?.gpu) {
       throw new Error('当前浏览器或设备不支持 WebGPU');
     }
+
+    await this.preloadModels();
 
     this.renderer = new WebGPURenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(1);
@@ -140,23 +188,19 @@ class Render {
     );
   }
 
-  createRenderableObject(id, descriptor) {
-    const model = descriptor?.model || null;
-    const modelData = model?.data || null;
+  createRenderableObject(id, kind) {
+    const modelData = this.modelCatalog.get(kind) || null;
 
     let mesh = null;
-    if (model?.format === 'gltf' && modelData && typeof modelData === 'object' && !ArrayBuffer.isView(modelData)) {
+    if (modelData && typeof modelData === 'object' && !ArrayBuffer.isView(modelData)) {
       mesh = this.createPrimitiveMesh(modelData);
-    } else if (model?.format === 'glb' && (modelData instanceof ArrayBuffer || ArrayBuffer.isView(modelData))) {
-      mesh = this.createDefaultMesh();
     } else {
       mesh = this.createDefaultMesh();
     }
 
-    const node = descriptor?.node || {};
-    const translation = node.translation || [5, 0.5, 0];
-    const rotation = node.rotation || [0, 0, 0, 1];
-    const scale = node.scale || [1, 1, 1];
+    const translation = [5, 0.5, 0];
+    const rotation = [0, 0, 0, 1];
+    const scale = [1, 1, 1];
 
     mesh.position.set(translation[0], translation[1], translation[2]);
     mesh.quaternion.set(rotation[0], rotation[1], rotation[2], rotation[3]);
@@ -166,6 +210,7 @@ class Render {
 
     return {
       id,
+      kind,
       mesh,
       targetPosition: new THREE.Vector3(translation[0], translation[1], translation[2]),
       targetQuaternion: new THREE.Quaternion(rotation[0], rotation[1], rotation[2], rotation[3]),
@@ -173,11 +218,11 @@ class Render {
     };
   }
 
-  ensureObject(id, descriptor) {
+  ensureObject(id, kind) {
     if (!id) return null;
     let entry = this.objects.get(id);
     if (!entry) {
-      entry = this.createRenderableObject(id, descriptor);
+      entry = this.createRenderableObject(id, kind);
       this.objects.set(id, entry);
     }
     return entry;
@@ -197,6 +242,59 @@ class Render {
       entry.mesh.position.lerp(entry.targetPosition, 0.22);
       entry.mesh.quaternion.slerp(entry.targetQuaternion, 0.22);
       entry.mesh.scale.lerp(entry.targetScale, 0.22);
+    }
+  }
+
+  applyFrameBuffer(buffer) {
+    if (!(buffer instanceof ArrayBuffer) || buffer.byteLength < FRAME_HEADER_BYTES) {
+      return;
+    }
+
+    const view = new DataView(buffer);
+    this.stats.simTime = view.getFloat64(0, true);
+    this.stats.arrived = view.getUint32(8, true);
+    this.stats.served = view.getUint32(12, true);
+    this.stats.dropped = view.getUint32(16, true);
+
+    const declaredCount = view.getUint32(20, true);
+    const maxCount = Math.floor((buffer.byteLength - FRAME_HEADER_BYTES) / FRAME_OBJECT_STRIDE);
+    const objectCount = Math.min(declaredCount, maxCount);
+    const activeIds = new Set();
+
+    let offset = FRAME_HEADER_BYTES;
+    for (let i = 0; i < objectCount; i += 1) {
+      const kind = view.getUint8(offset);
+      const entityId = view.getUint32(offset + 4, true);
+      const id = kind === ENTITY_KIND_SERVER ? 'server' : `item-${entityId}`;
+
+      const entry = this.ensureObject(id, kind);
+      if (entry) {
+        entry.targetPosition.set(
+          view.getFloat32(offset + 8, true),
+          view.getFloat32(offset + 12, true),
+          view.getFloat32(offset + 16, true)
+        );
+        entry.targetQuaternion.set(
+          view.getFloat32(offset + 20, true),
+          view.getFloat32(offset + 24, true),
+          view.getFloat32(offset + 28, true),
+          view.getFloat32(offset + 32, true)
+        );
+        entry.targetScale.set(
+          view.getFloat32(offset + 36, true),
+          view.getFloat32(offset + 40, true),
+          view.getFloat32(offset + 44, true)
+        );
+      }
+
+      activeIds.add(id);
+      offset += FRAME_OBJECT_STRIDE;
+    }
+
+    for (const id of Array.from(this.objects.keys())) {
+      if (!activeIds.has(id)) {
+        this.removeObject(id);
+      }
     }
   }
 
@@ -243,7 +341,9 @@ class Render {
     this.inputPort = port;
     this.inputPort.onmessage = (event) => {
       const message = event.data;
-      if (message?.type === 'frame' && message.payload) {
+      if (message?.type === FRAME_MESSAGE_TYPE && message.buffer) {
+        this.applyFrameBuffer(message.buffer);
+      } else if (message?.type === 'frame' && message.payload) {
         this.applyFrame(message.payload);
       }
     };
