@@ -1,9 +1,9 @@
-# MicroCity 下一代仿真框架
+# 文档驱动仿真（Document-Driven Simulation）框架
 
 ## 代码结构
 
 ```text
-microcityjs/
+dds/
 ├─ index.html          # 主线程 UI 与交互入口：读取参数、启动/重启双 Worker、桥接鼠标与窗口缩放
 ├─ sim-worker.js       # 仿真 Worker：离散事件排队仿真、状态统计、向渲染 Worker 推送帧数据
 ├─ render-worker.js    # 渲染 Worker：Three.js + WebGPU 场景管理、对象插值动画、相机控制
