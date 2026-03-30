@@ -1,316 +1,159 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="zh-CN">
-	<head>
-		<meta charset="UTF-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-		<title>排队仿真 - Worker + tinyqueue + Three.js</title>
-		<style>
-			:root {
-				color-scheme: light;
-			}
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>文档驱动仿真 (DDS)</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: system-ui, sans-serif; background: #1a1a2e; color: #e0e0e0; overflow: hidden; height: 100vh; }
+  #canvas-container { width: 100%; height: 100%; position: absolute; top: 0; left: 0; }
+  canvas { width: 100%; height: 100%; display: block; }
+  #controls {
+    position: absolute; top: 12px; left: 12px; z-index: 10;
+    background: rgba(20, 20, 40, 0.85); border-radius: 8px; padding: 12px 16px;
+    display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+    backdrop-filter: blur(6px); border: 1px solid rgba(255,255,255,0.1);
+  }
+  #controls label { font-size: 13px; display: flex; align-items: center; gap: 4px; }
+  #controls input[type="number"],
+  #controls input[type="range"] { background: #2a2a4a; color: #e0e0e0; border: 1px solid #444; border-radius: 4px; padding: 2px 6px; width: 70px; }
+  #controls input[type="range"] { width: 100px; }
+  #controls button {
+    padding: 6px 16px; border: none; border-radius: 4px; cursor: pointer;
+    font-size: 13px; font-weight: 600; transition: background 0.2s;
+  }
+  #btn-start { background: #4caf50; color: #fff; }
+  #btn-start:hover { background: #66bb6a; }
+  #btn-start.running { background: #f44336; }
+  #btn-start.running:hover { background: #ef5350; }
+  #status { position: absolute; bottom: 12px; left: 12px; z-index: 10; font-size: 12px; color: #aaa; }
+</style>
+</head>
+<body>
 
-			body {
-				margin: 0;
-				font-family: Arial, sans-serif;
-				background: #f3f4f6;
-			}
+<div id="canvas-container">
+  <canvas id="render-canvas"></canvas>
+</div>
 
-			.app {
-				padding: 16px;
-				display: grid;
-				gap: 12px;
-			}
+<div id="controls">
+  <button id="btn-start">启动仿真</button>
+  <label>速度
+    <input id="sim-speed" type="range" min="0.1" max="20" step="0.1" value="5">
+    <span id="speed-val">5×</span>
+  </label>
+  <label>时长(s)
+    <input id="sim-duration" type="number" min="1" max="86400" value="300">
+  </label>
+</div>
 
-			.panel {
-				background: #ffffff;
-				border-radius: 8px;
-				padding: 12px;
-				box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
-			}
+<div id="status">就绪</div>
 
-			.controls {
-				display: grid;
-				grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-				gap: 10px;
-				align-items: end;
-			}
+<script type="module">
+import * as Comlink from "https://unpkg.com/comlink@4.4.2/dist/esm/comlink.mjs";
 
-			.field {
-				display: grid;
-				gap: 6px;
-			}
+// ── DOM 元素 ──
+const canvas     = document.getElementById("render-canvas");
+const btnStart   = document.getElementById("btn-start");
+const inpSpeed   = document.getElementById("sim-speed");
+const spanSpeed  = document.getElementById("speed-val");
+const inpDur     = document.getElementById("sim-duration");
+const statusEl   = document.getElementById("status");
 
-			label {
-				font-size: 13px;
-			}
+// ── OffscreenCanvas ──
+const offscreen = canvas.transferControlToOffscreen();
 
-			input {
-				border: 1px solid #d1d5db;
-				border-radius: 6px;
-				padding: 8px;
-				font-size: 14px;
-			}
+// ── 创建 Workers ──
+const desRaw = new Worker("code/des_worker.js", { type: "module" });
+const tdrRaw = new Worker("code/3dr_worker.js", { type: "module" });
+const desWorker = Comlink.wrap(desRaw);
+const tdrWorker = Comlink.wrap(tdrRaw);
 
-			button {
-				height: 36px;
-				border: 0;
-				border-radius: 6px;
-				background: #2563eb;
-				color: white;
-				cursor: pointer;
-			}
+// ── 建立 MessageChannel（仿真帧 DES → 3DR）──
+const frameChannel = new MessageChannel();
+desRaw.postMessage({ type: "frame-port", port: frameChannel.port1 }, [frameChannel.port1]);
+tdrRaw.postMessage({ type: "frame-port", port: frameChannel.port2 }, [frameChannel.port2]);
 
-			button:hover {
-				background: #1d4ed8;
-			}
+// ── 初始化渲染 Worker（传递 OffscreenCanvas）──
+await tdrWorker.init(Comlink.transfer(offscreen, [offscreen]), window.innerWidth, window.innerHeight);
 
-			#status {
-				margin-top: 8px;
-				font-size: 13px;
-			}
+// ── 鼠标 / 触控事件桥接到渲染 Worker ──
+function bridgePointerEvents() {
+  let pointerDown = false;
+  let lastX = 0, lastY = 0;
+  let button = 0;
 
-			#sceneWrap {
-				width: 100%;
-				height: 540px;
-				border: 1px solid #d1d5db;
-				border-radius: 8px;
-				overflow: hidden;
-				background: #111827;
-			}
+  canvas.addEventListener("pointerdown", (e) => {
+    pointerDown = true;
+    lastX = e.clientX;
+    lastY = e.clientY;
+    button = e.button;
+    canvas.setPointerCapture(e.pointerId);
+  });
 
-			#simCanvas {
-				width: 100%;
-				height: 100%;
-				display: block;
-			}
-		</style>
-	</head>
-	<body>
-		<div class="app">
-			<div class="panel">
-				<div class="controls">
-					<div class="field">
-						<label for="arrivalRate">到达率 λ（每单位时间）</label>
-						<input id="arrivalRate" type="number" min="0.1" step="0.1" value="1.8" />
-					</div>
-					<div class="field">
-						<label for="serviceRate">服务率 μ（每单位时间）</label>
-						<input id="serviceRate" type="number" min="0.1" step="0.1" value="2.2" />
-					</div>
-					<div class="field">
-						<label for="queueCapacity">最大排队长度</label>
-						<input id="queueCapacity" type="number" min="1" step="1" value="12" />
-					</div>
-					<div class="field">
-						<label for="duration">仿真时长</label>
-						<input id="duration" type="number" min="5" step="1" value="60" />
-					</div>
-					<button id="playBtn" type="button">播放仿真</button>
-				</div>
-				<div id="status">状态：等待开始</div>
-			</div>
+  window.addEventListener("pointermove", (e) => {
+    if (!pointerDown) return;
+    const dx = e.clientX - lastX;
+    const dy = e.clientY - lastY;
+    lastX = e.clientX;
+    lastY = e.clientY;
+    tdrWorker.onPointerMove(dx, dy, button);
+  });
 
-			<div class="panel">
-				<div id="sceneWrap">
-					<canvas id="simCanvas"></canvas>
-				</div>
-			</div>
-		</div>
+  window.addEventListener("pointerup", () => { pointerDown = false; });
 
-		<script type="module">
-			import * as Comlink from 'https://esm.sh/comlink';
+  canvas.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    tdrWorker.onWheel(e.deltaY);
+  }, { passive: false });
+}
+bridgePointerEvents();
 
-			const playBtn = document.getElementById('playBtn');
-			const statusEl = document.getElementById('status');
-			const sceneWrap = document.getElementById('sceneWrap');
+// ── 窗口缩放 ──
+window.addEventListener("resize", () => {
+  tdrWorker.resize(window.innerWidth, window.innerHeight);
+});
 
-			const controls = {
-				arrivalRate: document.getElementById('arrivalRate'),
-				serviceRate: document.getElementById('serviceRate'),
-				queueCapacity: document.getElementById('queueCapacity'),
-				duration: document.getElementById('duration')
-			};
+// ── 仿真运行状态 ──
+let running = false;
 
-			let simWorker = null;
-			let renderWorker = null;
-			let simApi = null;
-			let renderApi = null;
-			let canvasEl = document.getElementById('simCanvas');
-			let detachMouseBridge = null;
+// 状态回调：仿真 Worker 通过 Comlink 回调通知主线程
+desRaw.addEventListener("message", (e) => {
+  if (e.data && e.data.type === "status") {
+    statusEl.textContent = e.data.text;
+  }
+  if (e.data && e.data.type === "done") {
+    running = false;
+    btnStart.textContent = "启动仿真";
+    btnStart.classList.remove("running");
+    statusEl.textContent = "仿真完成";
+  }
+});
 
-			function setStatus(text) {
-				statusEl.textContent = `状态：${text}`;
-			}
+// ── 速度滑块 ──
+inpSpeed.addEventListener("input", () => {
+  const v = parseFloat(inpSpeed.value);
+  spanSpeed.textContent = v + "×";
+  if (running) desWorker.setSpeed(v);
+});
 
-			function recreateCanvas() {
-				const nextCanvas = document.createElement('canvas');
-				nextCanvas.id = 'simCanvas';
-				sceneWrap.replaceChildren(nextCanvas);
-				canvasEl = nextCanvas;
-			}
-
-			function readConfig() {
-				return {
-					arrivalRate: Number(controls.arrivalRate.value),
-					serviceRate: Number(controls.serviceRate.value),
-					queueCapacity: Number(controls.queueCapacity.value),
-					duration: Number(controls.duration.value)
-				};
-			}
-
-			function postResize() {
-				if (!renderApi || !canvasEl) return;
-				const rect = sceneWrap.getBoundingClientRect();
-				renderApi.resize(
-					Math.max(1, Math.floor(rect.width)),
-					Math.max(1, Math.floor(rect.height))
-				);
-			}
-
-			function bindMouseBridge(activeRenderApi) {
-				if (detachMouseBridge) {
-					detachMouseBridge();
-					detachMouseBridge = null;
-				}
-
-				let lastX = 0;
-				let lastY = 0;
-
-				const onMouseDown = (event) => {
-					lastX = event.clientX;
-					lastY = event.clientY;
-				};
-
-				const onMouseMove = (event) => {
-					if (!activeRenderApi || event.buttons === 0) {
-						lastX = event.clientX;
-						lastY = event.clientY;
-						return;
-					}
-
-					const deltaX = event.clientX - lastX;
-					const deltaY = event.clientY - lastY;
-					lastX = event.clientX;
-					lastY = event.clientY;
-
-					activeRenderApi.onMouseMove({
-						deltax: deltaX,
-						deltay: deltaY,
-						buttons: event.buttons
-					});
-				};
-
-				const onWheel = (event) => {
-					if (!activeRenderApi) return;
-					event.preventDefault();
-					activeRenderApi.onMouseWheel({
-						deltaY: event.deltaY
-					});
-				};
-
-				const onContextMenu = (event) => {
-					event.preventDefault();
-				};
-
-				sceneWrap.addEventListener('mousedown', onMouseDown);
-				sceneWrap.addEventListener('mousemove', onMouseMove);
-				sceneWrap.addEventListener('wheel', onWheel, { passive: false });
-				sceneWrap.addEventListener('contextmenu', onContextMenu);
-
-				detachMouseBridge = () => {
-					sceneWrap.removeEventListener('mousedown', onMouseDown);
-					sceneWrap.removeEventListener('mousemove', onMouseMove);
-					sceneWrap.removeEventListener('wheel', onWheel);
-					sceneWrap.removeEventListener('contextmenu', onContextMenu);
-				};
-			}
-
-			async function startDualWorkers() {
-				if (simWorker || renderWorker) {
-					if (detachMouseBridge) {
-						detachMouseBridge();
-						detachMouseBridge = null;
-					}
-					simWorker?.terminate();
-					renderWorker?.terminate();
-					simWorker = null;
-					renderWorker = null;
-					simApi = null;
-					renderApi = null;
-				}
-
-				recreateCanvas();
-
-				const config = readConfig();
-				const rect = sceneWrap.getBoundingClientRect();
-
-				const offscreen = canvasEl.transferControlToOffscreen();
-				simWorker = new Worker('./sim-worker.js', { type: 'module' });
-				renderWorker = new Worker('./render-worker.js', { type: 'module' });
-
-				simWorker.onerror = (event) => {
-					const detail = [event.filename, event.lineno, event.colno]
-						.filter((item) => item !== undefined && item !== null && String(item).length > 0)
-						.join(':');
-					setStatus(`Worker错误：${event.message || '未知错误'}${detail ? ` (${detail})` : ''}`);
-				};
-				renderWorker.onerror = (event) => {
-					const detail = [event.filename, event.lineno, event.colno]
-						.filter((item) => item !== undefined && item !== null && String(item).length > 0)
-						.join(':');
-					setStatus(`Worker错误：${event.message || '未知错误'}${detail ? ` (${detail})` : ''}`);
-				};
-
-				simWorker.onmessageerror = () => {
-					setStatus('仿真Worker消息解析失败');
-				};
-				renderWorker.onmessageerror = () => {
-					setStatus('Worker消息解析失败');
-				};
-
-				simApi = Comlink.wrap(simWorker);
-				renderApi = Comlink.wrap(renderWorker);
-
-				const channel = new MessageChannel();
-				await simApi.connectRenderPort(Comlink.transfer(channel.port1, [channel.port1]));
-				await renderApi.connectSimPort(Comlink.transfer(channel.port2, [channel.port2]));
-
-				const renderInfo = await renderApi.init(
-					Comlink.transfer(offscreen, [offscreen]),
-					Math.max(1, Math.floor(rect.width)),
-					Math.max(1, Math.floor(rect.height))
-				);
-
-				bindMouseBridge(renderApi);
-
-				await simApi.start(
-					config,
-					Comlink.proxy({
-						onStatus(text) {
-							setStatus(text);
-						},
-						onStats(msg) {
-							setStatus(`运行中 | t=${msg.simTime.toFixed(2)} 到达=${msg.arrived} 完成=${msg.served} 丢弃=${msg.dropped} 队列=${msg.queueLength}`);
-						},
-						onDone(msg) {
-							setStatus(`结束 | t=${msg.simTime.toFixed(2)} 到达=${msg.arrived} 完成=${msg.served} 丢弃=${msg.dropped}`);
-						},
-						onError(message) {
-							setStatus(`错误：${message}`);
-						}
-					})
-				);
-
-				setStatus(`双Worker初始化完成（${renderInfo?.backend || '未知后端'}），仿真运行中`);
-			}
-
-			playBtn.addEventListener('click', () => {
-				startDualWorkers().catch((error) => {
-					setStatus(`启动失败：${error?.message || String(error)}`);
-				});
-			});
-
-			window.addEventListener('resize', postResize);
-		</script>
-	</body>
+// ── 启动 / 停止 ──
+btnStart.addEventListener("click", async () => {
+  if (!running) {
+    running = true;
+    btnStart.textContent = "停止仿真";
+    btnStart.classList.add("running");
+    const speed    = parseFloat(inpSpeed.value);
+    const duration = parseFloat(inpDur.value);
+    await desWorker.start({ speed, duration });
+  } else {
+    running = false;
+    btnStart.textContent = "启动仿真";
+    btnStart.classList.remove("running");
+    await desWorker.stop();
+    statusEl.textContent = "已停止";
+  }
+});
+</script>
+</body>
 </html>
